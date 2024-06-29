@@ -1,6 +1,44 @@
-import React from "react";
-import logo from "../assets/Logo.svg"
-function LoginPage() {
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import logo from "../assets/Logo.svg";
+
+function LoginPage(props) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+
+    try {
+      const response = await fetch("http://localhost:5000/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          password,
+        }),
+      });
+
+      if (response.ok) {
+        const responseData = await response.json();
+        console.log(responseData);
+        props.setLogin()
+        navigate("/home");
+      }
+      else {
+        alert("Invalid credentials.")
+        throw new Error("Login failed. Invalid credentials.");
+      }
+
+
+    } catch (error) {
+      console.error("Error:", error);
+    }
+  };
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-r from-blue-900 to-black">
       <div className="max-w-md w-full space-y-8 p-10 bg-black bg-opacity-50 rounded-lg shadow-lg">
@@ -13,7 +51,7 @@ function LoginPage() {
             Login and begin your listening experience.
           </h2>
         </div>
-        <form className="mt-8 space-y-6">
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <input type="hidden" name="remember" value="true" />
           <div className="rounded-md shadow-sm -space-y-px">
             <div className="mb-2">
@@ -27,6 +65,8 @@ function LoginPage() {
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
                 placeholder="Email address"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
               />
             </div>
             <div>
@@ -40,13 +80,18 @@ function LoginPage() {
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
                 placeholder="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
           </div>
 
           <div className="flex items-center justify-between">
             <div className="text-sm">
-              <a href="#" className="font-medium text-indigo-600 hover:text-indigo-500">
+              <a
+                href="#"
+                className="font-medium text-indigo-600 hover:text-indigo-500"
+              >
                 Forgot your password?
               </a>
             </div>
@@ -101,9 +146,12 @@ function LoginPage() {
           </div>
         </div>
         <div className="text-center text-sm text-gray-300">
-          If you are new here...{" "}
-          <a href="#" className="font-medium text-indigo-600 hover:text-indigo-500">
-            Sign up here
+          Don't have an account?{" "}
+          <a
+            href="/signup"
+            className="font-medium text-indigo-600 hover:text-indigo-500"
+          >
+            Create Account
           </a>
         </div>
         <div className="mt-6 text-center text-xs text-gray-500">

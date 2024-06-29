@@ -4,24 +4,31 @@ from flask_bcrypt import Bcrypt
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from flask_dance.contrib.google import make_google_blueprint, google
 from flask_dance.contrib.facebook import make_facebook_blueprint, facebook
+from flask_cors import CORS
+from flask_migrate import Migrate
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import os
-
+# import razorpay
+from datetime import datetime
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///music_app.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'your_secret_key'  # Replace with your secret key
+CORS(app)
 
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# google_bp = make_google_blueprint(client_id=GOOGLE_CLIENT_ID, client_secret=CLIENT_SECRET, redirect_to='google_login')
-# app.register_blueprint(google_bp, url_prefix="/google_login")
+migrate = Migrate(app, db)
 
 facebook_bp = make_facebook_blueprint(client_id='your_facebook_client_id', client_secret='your_facebook_client_secret', redirect_to='facebook_login')
 app.register_blueprint(facebook_bp, url_prefix="/facebook_login")
+
+# razorpay_client = razorpay.Client(auth=(app.config['RAZORPAY_KEY_ID'], app.config['RAZORPAY_KEY_SECRET']))
 
 
 class User(db.Model, UserMixin):
@@ -30,7 +37,7 @@ class User(db.Model, UserMixin):
     username = db.Column(db.String(50), nullable=False, unique=True)
     password_hash = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(100), nullable=False, unique=True)
-    role = db.Column(db.Enum('fan', 'musician'), nullable=False)
+    role = db.Column(db.String(100), nullable=False)
     created_at = db.Column(db.DateTime, server_default=db.func.now())
 
     def check_password(self, password):
@@ -38,6 +45,14 @@ class User(db.Model, UserMixin):
     
     def get_id(self):
         return str(self.user_id)
+
+class Post(db.Model):
+    __tablename__ = 'posts'
+    post_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    like = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
 
 
 class Profile(db.Model):
@@ -73,10 +88,14 @@ class Event(db.Model):
     __tablename__ = 'events'
     event_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     musician_id = db.Column(db.Integer, db.ForeignKey('musicians.musician_id'), nullable=False)
-    title = db.Column(db.String(100))
-    description = db.Column(db.Text)
-    event_date = db.Column(db.DateTime)
-    location = db.Column(db.String(255))
+    title = db.Column(db.String(100), nullable=False)
+    # total_capacity = db.Column(db.String(100), nullable=False)
+    # gold_price = db.Column(db.String(100), nullable=False)
+    # silver_price = db.Column(db.String(100), nullable=False)
+    # platinum_price = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    event_date = db.Column(db.DateTime, nullable=False)
+    location = db.Column(db.String(255), nullable=False)
     musician = db.relationship('Musician', back_populates='events')
 
 Musician.events = db.relationship('Event', back_populates='musician')
@@ -146,7 +165,26 @@ def load_user(user_id):
 
 @app.route('/')
 def index():
+    
     return 'Welcome to the Music App!'
+
+@app.route('/delete-all-users', methods=['DELETE'])
+def delete_all_users():
+    try:
+        # Query all users
+        users = Event.query.all()
+
+        # Delete each user from the database
+        for user in users:
+            db.session.delete(user)
+        
+        # Commit the changes to the database
+        db.session.commit()
+
+        return jsonify({'message': 'All users deleted successfully'}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/signup', methods=['POST'])
 def signup():
@@ -154,7 +192,8 @@ def signup():
     username = data.get('username')
     password = data.get('password')
     email = data.get('email')
-    role = data.get('role')  # Expecting 'fan' or 'musician'
+    role = data.get('role')
+    role = role.lower()  # Expecting 'fan' or 'musician' 
 
     if not username or not password or not email or not role:
         return jsonify({'message': 'Missing required fields'}), 400
@@ -172,22 +211,36 @@ def signup():
 
     db.session.add(new_user)
     db.session.commit()
+
+    # Create profile based on role
+    if role == 'musician':
+        new_profile = Musician(user_id=new_user.user_id)
+        db.session.add(new_profile)
+    elif role == 'fan':
+        new_profile = Fan(user_id=new_user.user_id)
+        db.session.add(new_profile)
+
+    db.session.commit()
     
     login_user(new_user)
     return jsonify({'message': 'User registered successfully'}), 201
 
+
 @app.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    username = data.get('username')
+    username = data.get('email') 
     password = data.get('password')
     
-    user = User.query.filter_by(username=username).first()
+    user = User.query.filter_by(email=username).first()
     if user and user.check_password(password):
         login_user(user)
         return jsonify({'message': 'Logged in successfully'}), 200
     else:
         return jsonify({'message': 'Invalid username or password'}), 401
+    
+
+
     
 
 @app.route('/google_login')
@@ -235,6 +288,106 @@ def logout():
 
 
 
+@app.route('/create-event', methods=['POST'])
+@login_required
+def create_event():
+    if current_user.role != 'musician':
+        return jsonify({'message': 'Only musicians can create events'}), 403
+
+    data = request.get_json()
+    title = data.get('title')
+    description = data.get('description')
+    event_date = data.get('event_date')  # Expected in ISO format: "YYYY-MM-DDTHH:MM:SS"
+    location = data.get('location')
+    # total_capacity = data.get('total_capacity')
+    # gold_price = data.get('gold_price')
+    # silver_price = data.get('silver_price')
+    # platinum_price = data.get('platinum_price')
+
+    if not title or not description or not event_date or not location:
+        return jsonify({'message': 'Missing required fields'}), 400
+
+    try:
+        event_date = datetime.fromisoformat(event_date)
+    except ValueError:
+        return jsonify({'message': 'Invalid date format'}), 400
+
+    new_event = Event(
+        musician_id=current_user.musician.musician_id,
+        title=title,
+        description=description,
+        event_date=event_date,
+        location=location,
+        # total_capacity=total_capacity,
+        # gold_price=gold_price,
+        # silver_price=silver_price,
+        # platinum_price=platinum_price,
+    )
+
+    db.session.add(new_event)
+    db.session.commit()
+
+    return jsonify({'message': 'Event created successfully'}), 201
+
+
+@app.route('/posts/create', methods=['POST'])
+def create_post():
+    data = request.get_json()
+
+    content = data.get('content')
+    user_id = data.get('user_id')  
+
+    if not content or not user_id:
+        return jsonify({'message': 'Content and user_id are required fields'}), 400
+
+    # Check if the user exists and is a musician (you can add more checks as per your application logic)
+    musician = Musician.query.filter_by(user_id=user_id).first()
+    print(musician)
+    if not musician:
+        return jsonify({'message': 'User is not authorized to create posts'}), 403
+
+    # Create a new post
+    new_post = Post(
+        user_id=user_id,
+        content=content,
+        created_at=datetime.now()
+    )
+
+    # Add the post to the database session
+    db.session.add(new_post)
+    db.session.commit()
+
+    return jsonify({'message': 'Post created successfully', 'post_id': new_post.post_id}), 201
+
+
+app.route("/search", methods=["GET"])
+def Search():
+    return jsonify({"Message": "Search Completed"})
+
+app.route("/ticket")
+def ticket():
+    return jsonify({"Message": "Tickets Returned"})
+
+
+# @socketio.on('join')
+# def on_join(data):
+#     username = data['username']
+#     room = data['room']
+#     join_room(room)
+#     emit('message', {'msg': f"{username} has entered the room."}, room=room)
+
+# @socketio.on('leave')
+# def on_leave(data):
+#     username = data['username']
+#     room = data['room']
+#     leave_room(room)
+#     emit('message', {'msg': f"{username} has left the room."}, room=room)
+
+# @socketio.on('send_message')
+# def handle_send_message_event(data):
+#     app.logger.info("{} has sent message to the room {}: {}".format(data['username'], data['room'], data['message']))
+#     emit('receive_message', data, room=data['room'])
+
+
 if __name__ == '__main__':
-   
     app.run(debug=True)
