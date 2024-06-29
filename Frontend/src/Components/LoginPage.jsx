@@ -25,7 +25,7 @@ function LoginPage(props) {
       if (response.ok) {
         const responseData = await response.json();
         console.log(responseData);
-        props.setLogin()
+        // props.setLogin()
         navigate("/home");
       }
       else {
