@@ -1,0 +1,240 @@
+from flask import Flask, redirect, url_for, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
+from flask_bcrypt import Bcrypt
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask_dance.contrib.google import make_google_blueprint, google
+from flask_dance.contrib.facebook import make_facebook_blueprint, facebook
+import os
+
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///music_app.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = 'your_secret_key'  # Replace with your secret key
+
+db = SQLAlchemy(app)
+bcrypt = Bcrypt(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
+
+# google_bp = make_google_blueprint(client_id=GOOGLE_CLIENT_ID, client_secret=CLIENT_SECRET, redirect_to='google_login')
+# app.register_blueprint(google_bp, url_prefix="/google_login")
+
+facebook_bp = make_facebook_blueprint(client_id='your_facebook_client_id', client_secret='your_facebook_client_secret', redirect_to='facebook_login')
+app.register_blueprint(facebook_bp, url_prefix="/facebook_login")
+
+
+class User(db.Model, UserMixin):
+    __tablename__ = 'users'
+    user_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    username = db.Column(db.String(50), nullable=False, unique=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(100), nullable=False, unique=True)
+    role = db.Column(db.Enum('fan', 'musician'), nullable=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+
+    def check_password(self, password):
+        return bcrypt.check_password_hash(self.password_hash, password)
+    
+    def get_id(self):
+        return str(self.user_id)
+
+
+class Profile(db.Model):
+    __tablename__ = 'profiles'
+    profile_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
+    name = db.Column(db.String(100))
+    bio = db.Column(db.Text)
+    profile_picture_url = db.Column(db.String(255))
+    user = db.relationship('User', back_populates='profile')
+
+User.profile = db.relationship('Profile', back_populates='user', uselist=False)
+
+class Musician(db.Model):
+    __tablename__ = 'musicians'
+    musician_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
+    genre = db.Column(db.String(50))
+    user = db.relationship('User', back_populates='musician')
+
+User.musician = db.relationship('Musician', back_populates='user', uselist=False)
+
+class Fan(db.Model):
+    __tablename__ = 'fans'
+    fan_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
+    preferences = db.Column(db.Text)
+    user = db.relationship('User', back_populates='fan')
+
+User.fan = db.relationship('Fan', back_populates='user', uselist=False)
+
+class Event(db.Model):
+    __tablename__ = 'events'
+    event_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    musician_id = db.Column(db.Integer, db.ForeignKey('musicians.musician_id'), nullable=False)
+    title = db.Column(db.String(100))
+    description = db.Column(db.Text)
+    event_date = db.Column(db.DateTime)
+    location = db.Column(db.String(255))
+    musician = db.relationship('Musician', back_populates='events')
+
+Musician.events = db.relationship('Event', back_populates='musician')
+
+class Ticket(db.Model):
+    __tablename__ = 'tickets'
+    ticket_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('events.event_id'), nullable=False)
+    fan_id = db.Column(db.Integer, db.ForeignKey('fans.fan_id'), nullable=False)
+    purchase_date = db.Column(db.DateTime, server_default=db.func.now())
+    price = db.Column(db.Numeric(10, 2))
+    event = db.relationship('Event', back_populates='tickets')
+    fan = db.relationship('Fan', back_populates='tickets')
+
+Event.tickets = db.relationship('Ticket', back_populates='event')
+Fan.tickets = db.relationship('Ticket', back_populates='fan')
+
+class Payment(db.Model):
+    __tablename__ = 'payments'
+    payment_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey('tickets.ticket_id'), nullable=False)
+    amount = db.Column(db.Numeric(10, 2))
+    payment_date = db.Column(db.DateTime, server_default=db.func.now())
+    payment_method = db.Column(db.Enum('credit_card', 'paypal', 'stripe'))
+    ticket = db.relationship('Ticket', back_populates='payments')
+
+Ticket.payments = db.relationship('Payment', back_populates='ticket')
+
+class Stream(db.Model):
+    __tablename__ = 'streams'
+    stream_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('events.event_id'), nullable=False)
+    stream_url = db.Column(db.String(255), nullable=False)
+    start_time = db.Column(db.DateTime)
+    end_time = db.Column(db.DateTime)
+    event = db.relationship('Event', back_populates='streams')
+
+Event.streams = db.relationship('Stream', back_populates='event')
+
+class Chat(db.Model):
+    __tablename__ = 'chats'
+    chat_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    stream_id = db.Column(db.Integer, db.ForeignKey('streams.stream_id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
+    message = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, server_default=db.func.now())
+    stream = db.relationship('Stream', back_populates='chats')
+    user = db.relationship('User', back_populates='chats')
+
+Stream.chats = db.relationship('Chat', back_populates='stream')
+User.chats = db.relationship('Chat', back_populates='user')
+
+class Recommendation(db.Model):
+    __tablename__ = 'recommendations'
+    recommendation_id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False)
+    recommended_event_ids = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    user = db.relationship('User', back_populates='recommendations')
+
+User.recommendations = db.relationship('Recommendation', back_populates='user')
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+@app.route('/')
+def index():
+    return 'Welcome to the Music App!'
+
+@app.route('/signup', methods=['POST'])
+def signup():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    email = data.get('email')
+    role = data.get('role')  # Expecting 'fan' or 'musician'
+
+    if not username or not password or not email or not role:
+        return jsonify({'message': 'Missing required fields'}), 400
+
+    existing_user = User.query.filter_by(username=username).first()
+    if existing_user:
+        return jsonify({'message': 'Username already taken'}), 409
+
+    existing_email = User.query.filter_by(email=email).first()
+    if existing_email:
+        return jsonify({'message': 'Email already registered'}), 409
+
+    password_hash = bcrypt.generate_password_hash(password).decode('utf-8')
+    new_user = User(username=username, password_hash=password_hash, email=email, role=role)
+
+    db.session.add(new_user)
+    db.session.commit()
+    
+    login_user(new_user)
+    return jsonify({'message': 'User registered successfully'}), 201
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+    
+    user = User.query.filter_by(username=username).first()
+    if user and user.check_password(password):
+        login_user(user)
+        return jsonify({'message': 'Logged in successfully'}), 200
+    else:
+        return jsonify({'message': 'Invalid username or password'}), 401
+    
+
+@app.route('/google_login')
+def google_login():
+    if not google.authorized:
+        return redirect(url_for('google.login'))
+    resp = google.get("/plus/v1/people/me")
+    assert resp.ok, resp.text
+    google_info = resp.json()
+    google_email = google_info['emails'][0]['value']
+
+    user = User.query.filter_by(email=google_email).first()
+    if not user:
+        user = User(username=google_info['displayName'], email=google_email, password_hash='', role='fan')  # Assign a default role or get from user
+        db.session.add(user)
+        db.session.commit()
+    
+    login_user(user)
+    return jsonify({'message': 'Invalid username or password'}), 200
+
+
+@app.route('/facebook_login')
+def facebook_login():
+    if not facebook.authorized:
+        return redirect(url_for('facebook.login'))
+    resp = facebook.get("/me?fields=id,name,email")
+    assert resp.ok, resp.text
+    facebook_info = resp.json()
+    facebook_email = facebook_info['email']
+
+    user = User.query.filter_by(email=facebook_email).first()
+    if not user:
+        user = User(username=facebook_info['name'], email=facebook_email, password_hash='', role='fan')  # Assign a default role or get from user
+        db.session.add(user)
+        db.session.commit()
+    
+    login_user(user)
+    return redirect(url_for('index'))
+
+@app.route('/logout', methods=['POST'])
+@login_required
+def logout():
+    logout_user()
+    return jsonify({'message': 'Logged out successfully'}), 200
+
+
+
+if __name__ == '__main__':
+   
+    app.run(debug=True)
