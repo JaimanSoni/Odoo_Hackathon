@@ -1,16 +1,16 @@
 import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
 import './App.css'
-
+import LoginPage from './Components/LoginPage'
+import SignUp from './Components/SignUp'
+import IdentificationPage from './Components/IdentificationPage'
 function App() {
   const [count, setCount] = useState(0)
 
   return (
     <>
-    <div className=' text-black'>
-      Live music app
-    </div>
+    {/* <LoginPage/> */}
+    {/* <SignUp/> */}
+    <IdentificationPage/>
     </>
   )
 }
