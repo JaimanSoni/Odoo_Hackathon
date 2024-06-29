@@ -8,6 +8,10 @@ from flask_cors import CORS
 from flask_migrate import Migrate
 from flask_socketio import SocketIO, emit, join_room, leave_room
 import os
+from werkzeug.utils import secure_filename
+
+UPLOAD_FOLDER = './Images'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 # import razorpay
 from datetime import datetime
 
@@ -332,24 +336,43 @@ def create_event():
 
 @app.route('/posts/create', methods=['POST'])
 def create_post():
-    data = request.get_json()
+    data = request.form  # Access form data
 
     content = data.get('content')
-    user_id = data.get('user_id')  
+    user_id = data.get('user_id')
 
     if not content or not user_id:
         return jsonify({'message': 'Content and user_id are required fields'}), 400
 
     # Check if the user exists and is a musician (you can add more checks as per your application logic)
     musician = Musician.query.filter_by(user_id=user_id).first()
-    print(musician)
     if not musician:
         return jsonify({'message': 'User is not authorized to create posts'}), 403
+
+    # Check if the request contains files
+    if 'photo' not in request.files:
+        return jsonify({'message': 'No file part'}), 400
+
+    photo = request.files['photo']
+
+    # If the user does not select a file, the browser submits an empty part without filename
+    if photo.filename == '':
+        return jsonify({'message': 'No selected file'}), 400
+
+    # Check if the file extension is allowed
+    if not allowed_file(photo.filename):
+        return jsonify({'message': 'Invalid file extension'}), 400
+
+    # Save the photo with a secure filename
+    filename = secure_filename(photo.filename)
+    photo_path = os.path.join(UPLOAD_FOLDER, filename)
+    photo.save(photo_path)
 
     # Create a new post
     new_post = Post(
         user_id=user_id,
         content=content,
+        photo_path=photo_path,  # Store the path to the uploaded photo
         created_at=datetime.now()
     )
 
@@ -360,13 +383,8 @@ def create_post():
     return jsonify({'message': 'Post created successfully', 'post_id': new_post.post_id}), 201
 
 
-app.route("/search", methods=["GET"])
-def Search():
-    return jsonify({"Message": "Search Completed"})
-
-app.route("/ticket")
-def ticket():
-    return jsonify({"Message": "Tickets Returned"})
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 # @socketio.on('join')

@@ -5,7 +5,6 @@ import './App.css'
 import LoginPage from './Components/LoginPage'
 import SignUp from './Components/SignUp'
 import Home from './Screens/Home';
-import Chat from './Chat';
 import IdentificationPage from './Components/IdentificationPage'
 function App() {
   const [count, setCount] = useState(0)
@@ -23,7 +22,7 @@ function App() {
     <>
         <Router>
           <Routes>
-            <Route path="/" element={<Chat />} />
+            <Route path="/" element={<LoginPage />} />
             <Route path="/login" element={<LoginPage isLoggedIn={isLoggedIn} setLogin={handleLogin} />}  />
             <Route path="/signup" element={<SignUp />} />
             <Route path="/home" element={<Home isLoggedIn={isLoggedIn} />} />
